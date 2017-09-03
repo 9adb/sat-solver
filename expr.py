@@ -7,6 +7,27 @@ OrExpr = collections.namedtuple('OrExpr', ['exprs'])
 NotExpr = collections.namedtuple('NotExpr', ['expr'])
 Variable = collections.namedtuple('Variable', ['name'])
 
+def make_not(expr):
+    return NotExpr(expr)
+
+def make_or(exprs):
+    exprs = frozenset(exprs)
+    if not exprs:
+        return False
+    elif len(exprs) == 1:
+        return list(exprs)[0]
+    else:
+        return OrExpr(exprs)
+
+def make_and(exprs):
+    exprs = frozenset(exprs)
+    if not exprs:
+        return True
+    elif len(exprs) == 1:
+        return list(exprs)[0]
+    else:
+        return AndExpr(exprs)
+
 def parse(input):
     """Parse a string into an expression tree."""
     tokens = _parse_into_tokens(iter(input))
@@ -16,9 +37,10 @@ def parse(input):
     except StopIteration:
         return expr
     else:
-        raise ValueError('Parse error.')
+        raise ValueError('Parse error (expected end of input).')
 
 def _parse_into_tokens(input):
+    yield '('
     token = []
     for symbol in input:
         if symbol.isalpha():
@@ -32,16 +54,16 @@ def _parse_into_tokens(input):
         elif symbol in ('(', ')', '&', '|', '~', '0', '1'):
             yield symbol
         elif not symbol.isalpha():
-            raise ValueError('Parse error.')
+            raise ValueError('Parse error (invalid symbol).')
     if token:
         yield ''.join(token)
+    yield ')'
 
 def _parse_into_tree(tokens):
-    exprs = []
     while True:
         token = next(tokens)
         if token == '~':
-            return NotExpr(_parse_into_tree(tokens))
+            return make_not(_parse_into_tree(tokens))
         elif token == '0':
             return False
         elif token == '1':
@@ -57,17 +79,19 @@ def _parse_into_tree(tokens):
                 if token == ')':
                     break
                 elif operator is not None and token != operator:
-                    raise ValueError('Parse error.')
+                    raise ValueError('Parse error (operator disagreement).')
                 else:
                     operator = token
             if operator == '&':
-                return AndExpr(frozenset(exprs))
+                return make_and(exprs)
             elif operator == '|':
-                return OrExpr(frozenset(exprs))
+                return make_or(exprs)
+            elif len(exprs) == 1 and operator is None:
+                return exprs[0]
             else:
-                raise ValueError('Parse error.')
+                raise ValueError('Parse error (invalid operator).')
         else:
-            raise ValueError('Parse error.') 
+            raise ValueError('Parse error (unxpected token).') 
     
 def format(expr):
     """Format an expression tree as a string."""
@@ -116,7 +140,7 @@ def simplify(expr):
         if subexpr is False:
             return True
 
-        return NotExpr(subexpr)
+        return make_not(subexpr)
 
     elif isinstance(expr, AndExpr):
         subexprs = set([simplify(subexpr) for subexpr in expr.exprs])
@@ -137,12 +161,7 @@ def simplify(expr):
         # (1&a) -> a
         subexprs.discard(True)
 
-        if len(subexprs) > 1:
-            return AndExpr(frozenset(subexprs))
-        elif len(subexprs) == 1:
-            return subexprs.pop()
-        else:
-            return True
+        return make_and(subexprs)
 
     elif isinstance(expr, OrExpr):
         subexprs = set([simplify(subexpr) for subexpr in expr.exprs])
@@ -163,12 +182,33 @@ def simplify(expr):
         # (1|a) -> a
         subexprs.discard(False)
 
-        if len(subexprs) > 1:
-            return OrExpr(frozenset(subexprs))
-        elif len(subexprs) == 1:
-            return subexprs.pop()
-        else:
-            return False
+        return make_or(subexprs)
 
     else:
         return expr
+
+def substitute(expr, vars):
+    if isinstance(expr, Variable):
+        return vars.get(expr.name, expr)
+    if isinstance(expr, NotExpr):
+        return make_not(substitute(expr.expr, vars))
+    if isinstance(expr, AndExpr):
+        return make_and(substitute(subexpr, vars) for subexpr in expr.exprs)
+    if isinstance(expr, OrExpr):
+        return make_or(substitute(subexpr, vars) for subexpr in expr.exprs)
+    return expr
+
+def evaluate(expr, vars):
+    return simplify(substitute(expr, vars))
+
+def variables(expr):
+    if isinstance(expr, Variable):
+        return {expr.name}
+    if isinstance(expr, NotExpr):
+        return variables(expr.expr)
+    if isinstance(expr, (AndExpr, OrExpr)):
+        v = set()
+        for subexpr in expr.exprs:
+            v |= variables(subexpr)
+        return v
+    return set()
